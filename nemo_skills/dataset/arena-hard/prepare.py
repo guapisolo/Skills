@@ -12,17 +12,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import argparse
 import json
 import urllib.request
 from pathlib import Path
 
-URL_QUESTIONS = "https://raw.githubusercontent.com/lm-sys/arena-hard-auto/main/data/arena-hard-v0.1/question.jsonl"
+# URL_QUESTIONS = "https://raw.githubusercontent.com/lm-sys/arena-hard-auto/main/data/arena-hard-v0.1/question.jsonl"
+# URL_BASELINE = (
+#     "https://raw.githubusercontent.com/lm-sys/arena-hard-auto/main/data/arena-hard-v0.1/model_answer/gpt-4-0314.jsonl"
+# )
+
+URL_QUESTIONS = "https://raw.githubusercontent.com/lm-sys/arena-hard-auto/main/data/arena-hard-v2.0/question.jsonl"
 URL_BASELINE = (
-    "https://raw.githubusercontent.com/lm-sys/arena-hard-auto/main/data/arena-hard-v0.1/model_answer/gpt-4-0314.jsonl"
+    "https://raw.githubusercontent.com/lm-sys/arena-hard-auto/main/data/arena-hard-v2.0/model_answer/o3-mini-2025-01-31.jsonl"
 )
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Download and format Arena-Hard benchmark data.")
+    parser.add_argument(
+        "--num-samples",
+        type=int,
+        default=500,
+        help="Number of examples to keep in the final test.jsonl file (default: 500).",
+    )
+    args = parser.parse_args()
+
     data_dir = Path(__file__).absolute().parent
     data_dir.mkdir(exist_ok=True)
     questions = str(data_dir / "question.jsonl")
@@ -46,7 +61,9 @@ if __name__ == "__main__":
             baseline_answers[data["uid"]] = answer_text
 
     with open(questions, "rt", encoding="utf-8") as fin, open(output_file, "wt", encoding="utf-8") as fout:
-        for line in fin:
+        for idx, line in enumerate(fin):
+            if idx >= args.num_samples:
+                break
             data = json.loads(line)
             data["question"] = data.pop("prompt")
             data["baseline_answer"] = baseline_answers[data["uid"]]
