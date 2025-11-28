@@ -48,8 +48,9 @@ def format_entry(entry):
     }
 
 
-def write_data_to_file(output_file, data, split):
+def write_data_to_file(output_file, data, split, num_samples=None):
     with open(output_file, "wt", encoding="utf-8") as fout:
+        written = 0
         for entry in tqdm(data, desc=f"Writing {output_file.name}"):
             # Filter by category for specific splits
             if split in HLE_REVERSE_MAP and entry["category"] != HLE_REVERSE_MAP[split]:
@@ -58,6 +59,9 @@ def write_data_to_file(output_file, data, split):
                 continue
             json.dump(format_entry(entry), fout)
             fout.write("\n")
+            written += 1
+            if num_samples is not None and written >= num_samples:
+                break
 
 
 if __name__ == "__main__":
@@ -67,6 +71,12 @@ if __name__ == "__main__":
         default="all",
         choices=("all", "text") + tuple(HLE_CATEGORIES_MAP.values()),
         help="Dataset split to process (all/text/math/other/human/phy/cs/bio/chem/eng).",
+    )
+    parser.add_argument(
+        "--num-samples",
+        type=int,
+        default=None,
+        help="If > 0, keeps only the first num_samples entries for each requested split.",
     )
     args = parser.parse_args()
     dataset = load_dataset("cais/hle", split="test")
@@ -88,7 +98,7 @@ if __name__ == "__main__":
     if args.split == "all":
         for split in ["text"] + list(HLE_CATEGORIES_MAP.values()):
             output_file = data_dir / f"{split}.jsonl"
-            write_data_to_file(output_file, dataset, split)
+            write_data_to_file(output_file, dataset, split, args.num_samples)
     else:
         output_file = data_dir / f"{args.split}.jsonl"
-        write_data_to_file(output_file, dataset, args.split)
+        write_data_to_file(output_file, dataset, args.split, args.num_samples)

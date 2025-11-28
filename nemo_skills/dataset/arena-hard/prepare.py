@@ -17,6 +17,8 @@ import json
 import urllib.request
 from pathlib import Path
 
+from numpy import Inf
+
 # URL_QUESTIONS = "https://raw.githubusercontent.com/lm-sys/arena-hard-auto/main/data/arena-hard-v0.1/question.jsonl"
 # URL_BASELINE = (
 #     "https://raw.githubusercontent.com/lm-sys/arena-hard-auto/main/data/arena-hard-v0.1/model_answer/gpt-4-0314.jsonl"
@@ -33,7 +35,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num-samples",
         type=int,
-        default=500,
+        default=None,
         help="Number of examples to keep in the final test.jsonl file (default: 500).",
     )
     args = parser.parse_args()
@@ -62,7 +64,7 @@ if __name__ == "__main__":
 
     with open(questions, "rt", encoding="utf-8") as fin, open(output_file, "wt", encoding="utf-8") as fout:
         for idx, line in enumerate(fin):
-            if idx >= args.num_samples:
+            if args.num_samples is not None and idx >= args.num_samples:
                 break
             data = json.loads(line)
             data["question"] = data.pop("prompt")

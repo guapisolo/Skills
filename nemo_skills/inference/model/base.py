@@ -15,6 +15,7 @@ import abc
 import asyncio
 import logging
 import os
+import re
 from enum import Enum
 from typing import Union
 
@@ -53,6 +54,9 @@ class BaseModel:
             Can also be specified through NEMO_SKILLS_SSH_SERVER env var.
         ssh_key_path: Optional[str] = None - Path to the ssh key for tunneling.
             Can also be specified through NEMO_SKILLS_SSH_KEY_PATH env var.
+        rate_limit_retry: Optional[bool] = False - When True, wait and retry forever on rate limit errors.
+        rate_limit_retry_min_wait: Optional[float] = 5.0 - Minimum seconds to sleep before retrying.
+        rate_limit_retry_max_wait: Optional[float] = 60.0 - Cap on wait duration, None to disable.
     """
 
     # Litellm provider name
@@ -71,6 +75,9 @@ class BaseModel:
         port: str = "5000",
         ssh_server: str | None = None,
         ssh_key_path: str | None = None,
+        rate_limit_retry: bool = False,
+        rate_limit_retry_min_wait: float = 5.0,
+        rate_limit_retry_max_wait: float | None = 60.0,
         # Context limit retry config variables
         enable_soft_fail: bool = False,
         context_limit_retry_strategy: str | None = None,
@@ -144,6 +151,9 @@ class BaseModel:
         # Controlling concurrent requests using semaphore since large
         # concurrent requests result into httpx hanging
         self.concurrent_semaphore = asyncio.Semaphore(2048)
+        self.rate_limit_retry = rate_limit_retry
+        self.rate_limit_retry_min_wait = rate_limit_retry_min_wait
+        self.rate_limit_retry_max_wait = rate_limit_retry_max_wait
 
     def _get_api_key(self, api_key: str | None, api_key_env_var: str | None, base_url: str) -> str | None:
         if api_key:  # explicit cmd argument always takes precedence
@@ -300,6 +310,28 @@ class BaseModel:
                         self._maybe_apply_stop_phrase_removal(result, remove_stop_phrases, stop_phrases)
                     return result
 
+                except openai.RateLimitError as e:
+                    if not self.rate_limit_retry:
+                        raise e
+                    wait_time = self._get_rate_limit_retry_delay(e)
+                    LOG.warning(
+                        "Rate limit reached for model %s. Sleeping %.1f seconds before retrying.",
+                        self.model_name_or_path,
+                        wait_time,
+                    )
+                    await asyncio.sleep(wait_time)
+                    continue
+                except httpx.HTTPStatusError as e:
+                    if e.response is None or e.response.status_code != 429 or not self.rate_limit_retry:
+                        raise e
+                    wait_time = self._get_rate_limit_retry_delay(e)
+                    LOG.warning(
+                        "HTTP 429 received for model %s. Sleeping %.1f seconds before retrying.",
+                        self.model_name_or_path,
+                        wait_time,
+                    )
+                    await asyncio.sleep(wait_time)
+                    continue
                 except openai.BadRequestError as e:
                     if "output messages (reasoning and final)" in str(e):
                         if retry_count < max_retries:
@@ -514,3 +546,54 @@ class BaseModel:
             results = self._process_chat_chunk(chunk)
             for result in results:
                 yield result
+
+    def _get_rate_limit_retry_delay(self, error) -> float:
+        """Determine how long we should wait before retrying after a rate limit error."""
+        wait_time = self._retry_after_from_headers(getattr(error, "response", None))
+        if wait_time is None:
+            wait_time = self._retry_delay_from_message(str(error))
+        if wait_time is None:
+            wait_time = self.rate_limit_retry_min_wait
+
+        wait_time = max(wait_time, self.rate_limit_retry_min_wait)
+        if self.rate_limit_retry_max_wait is not None:
+            wait_time = min(wait_time, self.rate_limit_retry_max_wait)
+        return wait_time
+
+    def _retry_after_from_headers(self, response) -> float | None:
+        """Extract retry delay from HTTP headers when available."""
+        if response is None:
+            return None
+        headers = getattr(response, "headers", None)
+        if not headers:
+            return None
+        retry_after = headers.get("retry-after")
+        if retry_after is None:
+            return None
+        try:
+            return float(retry_after)
+        except (TypeError, ValueError):
+            return None
+
+    def _retry_delay_from_message(self, message: str) -> float | None:
+        """Parse a retry delay in seconds from an error message."""
+        if not message:
+            return None
+
+        patterns = [
+            r"retryDelay\"?\s*:\s*\"?(\d+(?:\.\d+)?)s",
+            r"retry in (\d+(?:\.\d+)?)s",
+            r"retry in (\d+(?:\.\d+)?) seconds",
+            r"retry after (\d+(?:\.\d+)?) seconds",
+            r"Please retry in (\d+(?:\.\d+)?)s",
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, message, flags=re.IGNORECASE)
+            if match:
+                try:
+                    return float(match.group(1))
+                except ValueError:
+                    continue
+
+        return None

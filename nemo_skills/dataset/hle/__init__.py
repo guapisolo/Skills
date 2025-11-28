@@ -23,7 +23,7 @@ EVAL_SPLIT = "text"
 # Currently using o3-mini-20250131 which is used by the official leaderboard - https://agi.safe.ai/
 # To approximate the Artificial Analysis Index results, we suggest using gpt-4o - https://artificialanalysis.ai/methodology/intelligence-benchmarking#evaluation-suite-details
 JUDGE_PIPELINE_ARGS = {
-    "model": "o3-mini-20250131",
+    "model": "o3-mini",
     "server_type": "openai",
     "server_address": "https://api.openai.com/v1",
 }
